@@ -42,7 +42,7 @@ pub fn Arena(comptime T: type) type {
             };
         }
 
-        pub fn destroy(self: *Arena(T)) void {
+        pub fn release(self: *Arena(T)) void {
             self.entries.clearAndFree();
         }
 
@@ -136,13 +136,13 @@ pub fn Arena(comptime T: type) type {
 
 test "hyarena-alloc-free" {
     var g = try Arena(u32).create(std.testing.allocator, 20);
-    defer g.destroy();
+    defer g.release();
     try std.testing.expect(g.entries.capacity == 20);
 }
 
 test "hyarena-insert" {
     var g = try Arena(u32).create(std.testing.allocator, 20);
-    defer g.destroy();
+    defer g.release();
     try std.testing.expectError(error.OutOfRange, g.get(.{ .index = 0, .generation = 0 }));
     const id = try g.insert(37);
     const id2 = try g.insert(42);
@@ -152,7 +152,7 @@ test "hyarena-insert" {
 
 test "hyarena-invalidate" {
     var g = try Arena(u32).create(std.testing.allocator, 20);
-    defer g.destroy();
+    defer g.release();
     const id = try g.insert(37);
     try std.testing.expect(try g.get(id) == 37);
     const val = g.remove(id);
