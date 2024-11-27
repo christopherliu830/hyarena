@@ -17,32 +17,84 @@ fn Entry(comptime T: type) type {
     };
 }
 
+// Helper type to get the handle for an arena.
+pub fn Handle(comptime T: type) type {
+    return Arena(T).Handle;
+}
+
 pub fn Arena(comptime T: type) type {
     const Slot = union(EntryType) { empty: FreeSlot, occupied: Entry(T) };
 
     return struct {
+        pub const ValidItemsIterator = struct {
+            arena: *Arena(T),
+            index: u32 = 0,
+            
+            pub fn nextPtr(self: *ValidItemsIterator) ?*T {
+                const index = self.index;
+                if (index < 0 or index >= self.arena.len) return null;
+
+                while (self.index < self.arena.len) {
+                    var slot = self.arena.entries.items[self.index];
+                    switch(slot) {
+                        .occupied => |*val| {
+                            self.index += 1;
+                            return &val.value;
+                        },
+                        .empty => {
+                            self.index += 1;
+                        },
+                    }
+                }
+
+                return null;
+            }
+
+            pub fn next(self: *ValidItemsIterator) ?T {
+                const index = self.index;
+                if (index < 0 or index >= self.arena.len) return null;
+
+                while (self.index < self.arena.len) {
+                    const slot = self.arena.entries.items[self.index];
+                    switch(slot) {
+                        .occupied => |val| {
+                            self.index += 1;
+                            return val.value;
+                        },
+                        .empty => {
+                            self.index += 1;
+                        },
+                    }
+                }
+
+                return null;
+            }
+        };
+
         pub const Handle = struct {
-            generation: u32,
-            index: u32,
+            generation: u32 = 0,
+            index: u32 = 0,
 
-            pub const invalid = Handle { .generation = 0, .index = 0 };
+            pub const invalid = Arena(T).Handle { .generation = 0, .index = 0 };
 
-            pub fn is_valid(self: Handle) bool { return self.generation != 0; }
+            pub fn is_valid(self: Arena(T).Handle) bool { return self.generation != 0; }
         };
 
         len: u32,
         entries: std.ArrayList(Slot),
         free_list: ?u32,
+        num_items: u32,
 
         pub fn create(allocator: std.mem.Allocator, size: u32) !Arena(T) {
             return Arena(T){
                 .len = 0,
                 .entries = try std.ArrayList(Slot).initCapacity(allocator, size),
                 .free_list = null,
+                .num_items = 0,
             };
         }
 
-        pub fn release(self: *Arena(T)) void {
+        pub fn deinit(self: *Arena(T)) void {
             self.entries.clearAndFree();
         }
 
@@ -50,7 +102,7 @@ pub fn Arena(comptime T: type) type {
             return @intCast(self.entries.capacity);
         }
 
-        pub fn get(self: Arena(T), handle: Handle) !T {
+        pub fn get(self: Arena(T), handle: Arena(T).Handle) !T {
             const idx = handle.index;
             if (idx >= self.len) return error.OutOfRange;
             return switch (self.entries.items[idx]) {
@@ -62,6 +114,19 @@ pub fn Arena(comptime T: type) type {
             };
         }
 
+        pub fn getPtr(self: Arena(T), handle: Arena(T).Handle) !*T {
+            const idx = handle.index;
+            if (idx >= self.len) return error.OutOfRange;
+            return switch (self.entries.items[idx]) {
+                .empty => error.Invalidated,
+                .occupied => |*val| blk: {
+                    if (val.generation > handle.generation) break :blk error.Invalidated;
+                    break :blk &val.value;
+                },
+            };
+            
+        }
+
         pub fn at(self: Arena(T), idx: u32) !*T {
             if (idx >= self.len) return error.OutOfRange;
             return switch (self.entries.items[idx]) {
@@ -70,14 +135,21 @@ pub fn Arena(comptime T: type) type {
             };
         }
 
-        pub fn handle_at(self: Arena(T), idx: u32) !Handle {
+        pub fn handle_at(self: Arena(T), idx: u32) !Arena(T).Handle {
             return switch (self.entries.items[idx]) {
                 .empty => error.Invalidated,
                 .occupied => |val| .{ .index = idx, .generation = val.generation },
             };
         }
 
-        pub fn insert(self: *Arena(T), value: T) !Handle {
+        pub fn iterator(self: *Arena(T)) ValidItemsIterator {
+            return ValidItemsIterator {
+                .arena = self,
+                .index = 0,
+            };
+        }
+
+        pub fn insert(self: *Arena(T), value: T) !Arena(T).Handle {
             if (self.free_list != null) {
                 const idx = self.free_list.?;
                 const slot = &self.entries.items[idx];
@@ -85,6 +157,7 @@ pub fn Arena(comptime T: type) type {
 
                 self.free_list = slot.empty.next;
                 slot.* = .{ .occupied = .{ .generation = gen, .value = value } };
+                self.num_items += 1;
 
                 return .{ .index = idx, .generation = gen };
             } else {
@@ -95,12 +168,14 @@ pub fn Arena(comptime T: type) type {
                     return self.insert(value);
                 }
 
-                self.len += 1;
 
                 try self.entries.insert(index, .{ .occupied = .{
                     .generation = 1,
                     .value = value,
                 } });
+
+                self.len += 1;
+                self.num_items += 1;
 
                 return .{
                     .index = index,
@@ -109,11 +184,11 @@ pub fn Arena(comptime T: type) type {
             }
         }
 
-        pub fn remove(self: *Arena(T), handle: Handle) ?T {
+        pub fn release(self: *Arena(T), handle: Arena(T).Handle) void {
             const idx = handle.index;
-            if (idx >= self.len) return null;
+            if (idx >= self.len) return;
             const slot = &self.entries.items[idx];
-            const val = switch (self.entries.items[idx]) {
+            const val: ?T = switch (self.entries.items[idx]) {
                 .empty => null,
                 .occupied => |entry| blk: {
                     slot.* = .{ .empty = .{
@@ -124,10 +199,13 @@ pub fn Arena(comptime T: type) type {
                     break :blk entry.value;
                 },
             };
-            return val;
+            if (val != null) {
+                self.num_items -= 1;
+                return;
+            }
         }
 
-        pub fn resize(self: *Arena(T), new_cap: usize) !void {
+        pub fn resize(self: *Arena(T), new_cap: u32) !void {
             if (new_cap > std.math.maxInt(u32)) return error.OutOfMemory;
             try self.entries.resize(new_cap);
         }
@@ -136,13 +214,13 @@ pub fn Arena(comptime T: type) type {
 
 test "hyarena-alloc-free" {
     var g = try Arena(u32).create(std.testing.allocator, 20);
-    defer g.release();
+    defer g.deinit();
     try std.testing.expect(g.entries.capacity == 20);
 }
 
 test "hyarena-insert" {
     var g = try Arena(u32).create(std.testing.allocator, 20);
-    defer g.release();
+    defer g.deinit();
     try std.testing.expectError(error.OutOfRange, g.get(.{ .index = 0, .generation = 0 }));
     const id = try g.insert(37);
     const id2 = try g.insert(42);
@@ -152,10 +230,10 @@ test "hyarena-insert" {
 
 test "hyarena-invalidate" {
     var g = try Arena(u32).create(std.testing.allocator, 20);
-    defer g.release();
+    defer g.deinit();
     const id = try g.insert(37);
     try std.testing.expect(try g.get(id) == 37);
-    const val = g.remove(id);
+    const val = g.release(id);
     try std.testing.expect(val == 37);
     try std.testing.expectError(error.Invalidated, g.get(id));
 

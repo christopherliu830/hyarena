@@ -16,7 +16,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const lib = b.addStaticLibrary(.{
-        .name = "hy-arena",
+        .name = "hyoga-arena",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
         .root_source_file = b.path("src/arena.zig"),
@@ -29,7 +29,7 @@ pub fn build(b: *std.Build) void {
     // running `zig build`).
     b.installArtifact(lib);
 
-    _ = b.addModule("hyarena", .{
+    _ = b.addModule("hyoga-arena", .{
         .root_source_file = b.path("src/arena.zig"),
         .target = target,
         .optimize = optimize
