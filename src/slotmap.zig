@@ -19,15 +19,15 @@ fn Entry(comptime T: type) type {
 
 // Helper type to get the handle for an arena.
 pub fn Handle(comptime T: type) type {
-    return Arena(T).Handle;
+    return SlotMap(T).Handle;
 }
 
-pub fn Arena(comptime T: type) type {
+pub fn SlotMap(comptime T: type) type {
     const Slot = union(EntryType) { empty: FreeSlot, occupied: Entry(T) };
 
     return struct {
         pub const ValidItemsIterator = struct {
-            arena: *Arena(T),
+            arena: *SlotMap(T),
             index: u32 = 0,
             
             pub fn nextPtr(self: *ValidItemsIterator) ?*T {
@@ -71,13 +71,13 @@ pub fn Arena(comptime T: type) type {
             }
         };
 
-        pub const Handle = struct {
+        pub const Handle = extern struct {
             generation: u32 = 0,
             index: u32 = 0,
 
-            pub const invalid = Arena(T).Handle { .generation = 0, .index = 0 };
+            pub const invalid = SlotMap(T).Handle { .generation = 0, .index = 0 };
 
-            pub fn is_valid(self: Arena(T).Handle) bool { return self.generation != 0; }
+            pub fn is_valid(self: SlotMap(T).Handle) bool { return self.generation != 0; }
         };
 
         len: u32,
@@ -85,8 +85,8 @@ pub fn Arena(comptime T: type) type {
         free_list: ?u32,
         num_items: u32,
 
-        pub fn create(allocator: std.mem.Allocator, size: u32) !Arena(T) {
-            return Arena(T){
+        pub fn create(allocator: std.mem.Allocator, size: u32) !SlotMap(T) {
+            return SlotMap(T){
                 .len = 0,
                 .entries = try std.ArrayList(Slot).initCapacity(allocator, size),
                 .free_list = null,
@@ -94,15 +94,15 @@ pub fn Arena(comptime T: type) type {
             };
         }
 
-        pub fn deinit(self: *Arena(T)) void {
+        pub fn deinit(self: *SlotMap(T)) void {
             self.entries.clearAndFree();
         }
 
-        pub fn capacity(self: Arena(T)) u32 {
+        pub fn capacity(self: SlotMap(T)) u32 {
             return @intCast(self.entries.capacity);
         }
 
-        pub fn get(self: Arena(T), handle: Arena(T).Handle) !T {
+        pub fn get(self: SlotMap(T), handle: SlotMap(T).Handle) !T {
             const idx = handle.index;
             if (idx >= self.len) return error.OutOfRange;
             return switch (self.entries.items[idx]) {
@@ -114,7 +114,7 @@ pub fn Arena(comptime T: type) type {
             };
         }
 
-        pub fn getPtr(self: Arena(T), handle: Arena(T).Handle) !*T {
+        pub fn getPtr(self: SlotMap(T), handle: SlotMap(T).Handle) !*T {
             const idx = handle.index;
             if (idx >= self.len) return error.OutOfRange;
             return switch (self.entries.items[idx]) {
@@ -127,7 +127,7 @@ pub fn Arena(comptime T: type) type {
             
         }
 
-        pub fn at(self: Arena(T), idx: u32) !*T {
+        pub fn at(self: SlotMap(T), idx: u32) !*T {
             if (idx >= self.len) return error.OutOfRange;
             return switch (self.entries.items[idx]) {
                 .empty => error.Invalidated,
@@ -135,21 +135,32 @@ pub fn Arena(comptime T: type) type {
             };
         }
 
-        pub fn handle_at(self: Arena(T), idx: u32) !Arena(T).Handle {
+        pub fn handle_at(self: SlotMap(T), idx: u32) !SlotMap(T).Handle {
             return switch (self.entries.items[idx]) {
                 .empty => error.Invalidated,
                 .occupied => |val| .{ .index = idx, .generation = val.generation },
             };
         }
 
-        pub fn iterator(self: *Arena(T)) ValidItemsIterator {
+        pub fn iterator(self: *SlotMap(T)) ValidItemsIterator {
             return ValidItemsIterator {
                 .arena = self,
                 .index = 0,
             };
         }
 
-        pub fn insert(self: *Arena(T), value: T) !Arena(T).Handle {
+        /// Caller is responsible for freeing the returned slice.
+        pub fn toSlice(self: *SlotMap(T), allocator: std.mem.Allocator) ![]T {
+            var items = try allocator.alloc(T, self.len);
+            var it = self.iterator();
+            var i: u32 = 0;
+            while (it.next()) |item|: (i += 1) {
+                items[i] = item;
+            } 
+            return items;
+        }
+
+        pub fn insert(self: *SlotMap(T), value: T) !SlotMap(T).Handle {
             if (self.free_list != null) {
                 const idx = self.free_list.?;
                 const slot = &self.entries.items[idx];
@@ -184,7 +195,7 @@ pub fn Arena(comptime T: type) type {
             }
         }
 
-        pub fn release(self: *Arena(T), handle: Arena(T).Handle) void {
+        pub fn release(self: *SlotMap(T), handle: SlotMap(T).Handle) void {
             const idx = handle.index;
             if (idx >= self.len) return;
             const slot = &self.entries.items[idx];
@@ -205,21 +216,21 @@ pub fn Arena(comptime T: type) type {
             }
         }
 
-        pub fn resize(self: *Arena(T), new_cap: u32) !void {
+        pub fn resize(self: *SlotMap(T), new_cap: u32) !void {
             if (new_cap > std.math.maxInt(u32)) return error.OutOfMemory;
             try self.entries.resize(new_cap);
         }
     };
 }
 
-test "hyarena-alloc-free" {
-    var g = try Arena(u32).create(std.testing.allocator, 20);
+test "slotmap create and deinit" {
+    var g = try SlotMap(u32).create(std.testing.allocator, 20);
     defer g.deinit();
     try std.testing.expect(g.entries.capacity == 20);
 }
 
-test "hyarena-insert" {
-    var g = try Arena(u32).create(std.testing.allocator, 20);
+test "slotmap insertions" {
+    var g = try SlotMap(u32).create(std.testing.allocator, 20);
     defer g.deinit();
     try std.testing.expectError(error.OutOfRange, g.get(.{ .index = 0, .generation = 0 }));
     const id = try g.insert(37);
@@ -228,8 +239,8 @@ test "hyarena-insert" {
     try std.testing.expect(try g.get(id2) == 42);
 }
 
-test "hyarena-invalidate" {
-    var g = try Arena(u32).create(std.testing.allocator, 20);
+test "slotmap invalidations" {
+    var g = try SlotMap(u32).create(std.testing.allocator, 20);
     defer g.deinit();
     const id = try g.insert(37);
     try std.testing.expect(try g.get(id) == 37);
