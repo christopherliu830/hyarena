@@ -1,6 +1,6 @@
 A generational arena for Zig.
 
-See [src/arena.zig](src/slotmap.zig) tests for usage.
+See [src/slotmap.zig](src/slotmap.zig) tests for usage.
 
 To use, add to your build.zig.zon and then add this to your
 build.zig:
