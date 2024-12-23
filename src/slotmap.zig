@@ -183,7 +183,6 @@ pub fn SlotMap(comptime T: type) type {
                     return self.insert(value);
                 }
 
-
                 try self.entries.insert(index, .{ .occupied = .{
                     .generation = 1,
                     .value = value,
@@ -222,7 +221,7 @@ pub fn SlotMap(comptime T: type) type {
 
         pub fn resize(self: *SlotMap(T), new_cap: u32) !void {
             if (new_cap > std.math.maxInt(u32)) return error.OutOfMemory;
-            try self.entries.resize(new_cap);
+            try self.entries.ensureTotalCapacity(new_cap);
         }
     };
 }
