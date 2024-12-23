@@ -28,21 +28,25 @@ pub fn SlotMap(comptime T: type) type {
     return struct {
         pub const ValidItemsIterator = struct {
             arena: *SlotMap(T),
-            index: u32 = 0,
+            next_index: u32 = 0,
+
+            pub inline fn index(self: *ValidItemsIterator) u32 {
+                return self.next_index - 1;
+            }
             
             pub fn nextPtr(self: *ValidItemsIterator) ?*T {
-                const index = self.index;
-                if (index < 0 or index >= self.arena.len) return null;
+                const i = self.next_index;
+                if (i < 0 or i >= self.arena.len) return null;
 
-                while (self.index < self.arena.len) {
-                    var slot = self.arena.entries.items[self.index];
+                while (self.next_index < self.arena.len) {
+                    var slot = self.arena.entries.items[self.next_index];
                     switch(slot) {
                         .occupied => |*val| {
-                            self.index += 1;
+                            self.next_index += 1;
                             return &val.value;
                         },
                         .empty => {
-                            self.index += 1;
+                            self.next_index += 1;
                         },
                     }
                 }
@@ -51,18 +55,18 @@ pub fn SlotMap(comptime T: type) type {
             }
 
             pub fn next(self: *ValidItemsIterator) ?T {
-                const index = self.index;
-                if (index < 0 or index >= self.arena.len) return null;
+                const i = self.next_index;
+                if (i < 0 or i >= self.arena.len) return null;
 
-                while (self.index < self.arena.len) {
-                    const slot = self.arena.entries.items[self.index];
+                while (self.next_index < self.arena.len) {
+                    const slot = self.arena.entries.items[self.next_index];
                     switch(slot) {
                         .occupied => |val| {
-                            self.index += 1;
+                            self.next_index += 1;
                             return val.value;
                         },
                         .empty => {
-                            self.index += 1;
+                            self.next_index += 1;
                         },
                     }
                 }
@@ -145,7 +149,7 @@ pub fn SlotMap(comptime T: type) type {
         pub fn iterator(self: *SlotMap(T)) ValidItemsIterator {
             return ValidItemsIterator {
                 .arena = self,
-                .index = 0,
+                .next_index = 0,
             };
         }
 
