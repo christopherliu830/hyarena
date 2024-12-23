@@ -199,7 +199,7 @@ pub fn SlotMap(comptime T: type) type {
             }
         }
 
-        pub fn release(self: *SlotMap(T), handle: SlotMap(T).Handle) void {
+        pub fn remove(self: *SlotMap(T), handle: SlotMap(T).Handle) void {
             const idx = handle.index;
             if (idx >= self.len) return;
             const slot = &self.entries.items[idx];
@@ -248,7 +248,7 @@ test "slotmap invalidations" {
     defer g.deinit();
     const id = try g.insert(37);
     try std.testing.expect(try g.get(id) == 37);
-    const val = g.release(id);
+    const val = g.remove(id);
     try std.testing.expect(val == 37);
     try std.testing.expectError(error.Invalidated, g.get(id));
 
